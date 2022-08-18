@@ -2,30 +2,52 @@
 #include <stdlib.h>
 #include <string.h>
 #include <uk/test.h>
+#include <sys/random.h>
 #include "test.h"
 
-// int factorial(int n) {
-// 	int result = 1;
-// 	for (int i = 1; i <= n; i++) {
-// 		result *= i;
-// 	}
+#define LONG_RUN true
 
-// 	return result;
-// }
+unsigned long randl() {
+	unsigned long ret;
+	getrandom(&ret, sizeof(ret), 0);
+	return ret;
+}
 
-// UK_TESTCASE(factorial_testsuite, factorial_test_positive)
-// {
-// 	UK_TEST_EXPECT_SNUM_EQ(factorial(2), 2);
-// }
+int simple_test()
+{
+	unsigned long middle = randl() % 500;
+	unsigned long down = randl() % 12;
+	unsigned long up = randl() % 437;
 
-// uk_testsuite_register(factorial_testsuite, NULL);
+	long idx;
 
-void __gang_check(unsigned long middle, long down, long up, int chunk, int hop)
+	UK_RADIX_TREE(tree);
+	printf("Params: middle-%ld, down-%ld, up-%ld\n", middle, down, up);
+	for (idx = -down; idx < up; idx++)
+		node_insert(&tree, middle + idx);
+
+	node_check_absent(&tree, middle - down - 1);
+	for (idx = -down; idx < up; idx++)
+		node_check_present(&tree, middle + idx);
+	node_check_absent(&tree, middle + up);
+
+	return 0;
+}
+
+UK_TESTCASE(simple_test_testsuite, simple_test_positive)
+{
+	UK_TEST_EXPECT_SNUM_EQ(simple_test(), 0);
+}
+
+// uk_testsuite_register(simple_test_testsuite, NULL);
+
+void __gang_check(unsigned long middle, long down, long up)
 {
 	long idx;
 	UK_RADIX_TREE(tree);
 
 	middle = 1 << 30;
+	printf("middle: 0x%lx, down: %ld, up: %ld\n", middle, down, up);
 
 	for (idx = -down; idx < up; idx++)
 		node_insert(&tree, middle + idx);
@@ -35,32 +57,26 @@ void __gang_check(unsigned long middle, long down, long up, int chunk, int hop)
 		node_check_present(&tree, middle + idx);
 	node_check_absent(&tree, middle + up);
 
-	if (chunk > 0) {
-		node_gang_check_present(&tree, middle - down, up + down,
-				chunk, hop);
-		node_full_scan(&tree, middle - down, down + up, chunk);
-	}
+#ifdef LINUX_RADIX
 	node_kill_tree(&tree);
+	#endif
 }
 
 int gang_check(void)
 {
-	__gang_check(1UL << 30, 128, 128, 35, 2);
-	__gang_check(1UL << 31, 128, 128, 32, 32);
-	__gang_check(1UL << 31, 128, 128, 32, 100);
-	__gang_check(1UL << 31, 128, 128, 17, 7);
-	__gang_check(0xffff0000UL, 0, 65536, 17, 7);
-	__gang_check(0xfffffffeUL, 1, 1, 17, 7);
+	__gang_check(1UL << 30, 128, 128);
+	__gang_check(1UL << 31, 128, 128);
+	__gang_check(0xfffffffeUL, 1, 1);
 
 	return 0;
 }
 
-// UK_TESTCASE(gang_check_testsuite, gang_check_positive)
-// {
-// 	UK_TEST_EXPECT_SNUM_EQ(gang_check(), 0);
-// }
+UK_TESTCASE(gang_check_testsuite, gang_check_positive)
+{
+	UK_TEST_EXPECT_SNUM_EQ(gang_check(), 0);
+}
 
-// uk_testsuite_register(gang_check_testsuite, NULL);
+uk_testsuite_register(gang_check_testsuite, NULL);
 
 void __big_gang_check(void)
 {
@@ -72,30 +88,34 @@ void __big_gang_check(void)
 		unsigned long old_start;
 
 //		printf("0x%08lx\n", start);
-		__gang_check(start, rand() % 113 + 1, rand() % 71,
-				rand() % 157, rand() % 91 + 1);
+		__gang_check(start, randl() % 113 + 1, randl() % 71);
 		old_start = start;
-		start += rand() % 1000000;
+		start += randl() % 1000000;
 		start %= 1ULL << 33;
 		if (start < old_start)
 			wrapped = 1;
 	} while (!wrapped);
-
-	return 0;
 }
 
-void big_gang_check(bool long_run)
+int big_gang_check(bool long_run)
 {
 	int i;
 
 	for (i = 0; i < (long_run ? 1000 : 3); i++) {
 		__big_gang_check();
-		printv(2, "%d ", i);
+		printf("%d ", i);
 		fflush(stdout);
 	}
 
 	return 0;
 }
+
+UK_TESTCASE(big_gang_check_testsuite, big_gang_check_positive)
+{
+	UK_TEST_EXPECT_SNUM_EQ(big_gang_check(LONG_RUN), 0);
+}
+
+// uk_testsuite_register(big_gang_check_testsuite, NULL);
 
 void add_and_check(void)
 {
@@ -104,11 +124,13 @@ void add_and_check(void)
 	node_insert(&tree, 44);
 	node_check_present(&tree, 44);
 	node_check_absent(&tree, 43);
+	#ifdef LINUX_RADIX
 	node_kill_tree(&tree);
-
+#endif
 	return 0;
 }
 
+#ifdef LINUX_RADIX
 void dynamic_height_check(void)
 {
 	int i;
@@ -147,3 +169,4 @@ void dynamic_height_check(void)
 
 	return 0;
 }
+#endif
